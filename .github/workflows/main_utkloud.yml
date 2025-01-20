@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy container app to Azure Web App - utkloud
+name: Build and deploy ASP app to Azure Web App - utkloud
 
 on:
   push:
@@ -11,41 +11,56 @@ on:
 
 jobs:
   build:
-    runs-on: 'ubuntu-latest'
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      - name: Setup MSBuild path
+        uses: microsoft/setup-msbuild@v1.0.2
 
-    - name: Log in to registry
-      uses: docker/login-action@v2
-      with:
-        registry: https://mcr.microsoft.com/
-        username: ${{ secrets.AzureAppService_ContainerUsername_c7513f69e5984b038981bb9a5181b030 }}
-        password: ${{ secrets.AzureAppService_ContainerPassword_2b9651bc0bc14f69b5a181a04fc91252 }}
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1.0.5
 
-    - name: Build and push container image to registry
-      uses: docker/build-push-action@v3
-      with:
-        push: true
-        tags: mcr.microsoft.com/${{ secrets.AzureAppService_ContainerUsername_c7513f69e5984b038981bb9a5181b030 }}/appsvc/staticsite:${{ github.sha }}
-        file: ./Dockerfile
+      - name: Restore NuGet packages
+        run: nuget restore
+
+      - name: Publish to folder
+        run: msbuild /nologo /verbosity:m /t:Build /t:pipelinePreDeployCopyAllFilesToOneFolder /p:_PackageTempDir="\published\"
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASP-app
+          path: '/published/**'
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: build
     environment:
-      name: 'production'
+      name: 'Production'
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+    permissions:
+      id-token: write #This is required for requesting the JWT
 
     steps:
-    - name: Deploy to Azure Web App
-      id: deploy-to-webapp
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'utkloud'
-        slot-name: 'production'
-        publish-profile: ${{ secrets.AzureAppService_PublishProfile_755da0351ef74eea9dcdd6e1deb2eb56 }}
-        images: 'mcr.microsoft.com/${{ secrets.AzureAppService_ContainerUsername_c7513f69e5984b038981bb9a5181b030 }}/appsvc/staticsite:${{ github.sha }}'
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: ASP-app
+      
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_36D8A312EE8742AA94968869179E61DF }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_30B41B49238047659E10470540E2B0ED }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_50761A9F46C5442094301AD746497129 }}
+
+      - name: Deploy to Azure Web App
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'utkloud'
+          slot-name: 'Production'
+          package: .
+          
